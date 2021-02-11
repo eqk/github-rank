@@ -8,17 +8,19 @@ import models.Contributor
 import play.api.libs.json.Json
 import play.api.mvc._
 import service.ContributorsService
+import cats.implicits._
+import errors.{NotFoundError, RateLimitExceeded}
 
 @Singleton
 class ContributionsController @Inject()(
   val controllerComponents: ControllerComponents,
-  contributorsService: ContributorsService[Future]
+  contributorsService: ContributorsService
 )(implicit ec: ExecutionContext) extends BaseController {
 
   def contributorsRank(orgName: String): Action[AnyContent] = Action.async { implicit request: Request[AnyContent] =>
-    for {
+    (for {
       repos <- contributorsService.getRepositories(orgName)
-      contributors <- Future.traverse(repos)(contributorsService.getContributors(orgName, _))
+      contributors <- repos.map(contributorsService.getContributors(orgName, _)).sequence
     } yield {
       val mergedAndSorted = contributors
         .flatten
@@ -28,6 +30,9 @@ class ContributionsController @Inject()(
         .sortBy(-_.contributions)
 
       Ok(Json.toJson(mergedAndSorted))
+    }).valueOr {
+      case NotFoundError => NotFound
+      case RateLimitExceeded => Forbidden
     }
   }
 }
