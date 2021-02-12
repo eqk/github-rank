@@ -9,7 +9,7 @@ import cats.implicits._
 import errors.{AppError, NotFoundError, RateLimitExceeded}
 import models.{Contributor, Repository}
 import play.api.libs.json.Reads
-import play.api.libs.ws.{WSAuthScheme, WSClient, WSRequest, WSResponse}
+import play.api.libs.ws._
 
 @Singleton
 class GithubContributorsService @Inject()(
@@ -38,17 +38,21 @@ class GithubContributorsService @Inject()(
   }
 
   def crawlPages[A: Reads](url: String): FErrorOr[List[A]] = {
-    val req = ws.url(url).withQueryStringParameters(
-      "per_page" -> "100"
-    )
-    val authedReq = accessToken.fold(req)(req.withAuth("", _, WSAuthScheme.BASIC))
 
-    def getFirstWithCount = request(authedReq.withQueryStringParameters("page" -> "1")) { resp =>
+    def requestWithPage(url: String, page: Int = 1): WSRequest = {
+      val req = ws.url(url).withQueryStringParameters(
+        "per_page" -> "100",
+        "page" -> page.toString
+      )
+      accessToken.fold(req)(req.withAuth("", _, WSAuthScheme.BASIC))
+    }
+
+    def getFirstWithCount: FErrorOr[(Int, List[A])] = request(requestWithPage(url)) { resp =>
       val pagesCount = resp.header("link").flatMap(lastPageNumber).getOrElse(1)
       (pagesCount, resp.json.as[List[A]])
     }
 
-    def getPage(page: Int): FErrorOr[List[A]] = request(authedReq.withQueryStringParameters("page" -> page.toString))(_.json.as[List[A]])
+    def getPage(page: Int): FErrorOr[List[A]] = request(requestWithPage(url, page))(_.json.as[List[A]])
 
     for {
       firstWithPage <- getFirstWithCount
