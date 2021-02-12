@@ -16,6 +16,7 @@ class GithubContributorsService @Inject()(
   ws: WSClient
 )(implicit ec: ExecutionContext) extends ContributorsService
 {
+  type FErrorOr[A] = EitherT[Future, AppError, A]
   val accessToken: Option[String] = sys.env.get("GH_TOKEN")
 
   private def lastPageNumber(header: String): Option[Int] = {
@@ -26,17 +27,17 @@ class GithubContributorsService @Inject()(
     }
   }
 
-  def request[A](request: WSRequest)(f: WSResponse => A): Future[Either[AppError, A]] = {
-    request.execute().map { response =>
+  def request[A](request: WSRequest)(f: WSResponse => A): FErrorOr[A] = {
+    EitherT(request.execute().map { response =>
       response.status match {
         case 404 => Left(NotFoundError)
         case 403 => Left(RateLimitExceeded)
         case 200 => Right(f(response))
       }
-    }
+    })
   }
 
-  def crawlPages[A: Reads](url: String): EitherT[Future, AppError, List[A]] = {
+  def crawlPages[A: Reads](url: String): FErrorOr[List[A]] = {
     val req = ws.url(url).withQueryStringParameters(
       "per_page" -> "100"
     )
@@ -47,20 +48,20 @@ class GithubContributorsService @Inject()(
       (pagesCount, resp.json.as[List[A]])
     }
 
-    def getPage(page: Int): Future[Either[AppError, List[A]]] = request(authedReq.withQueryStringParameters("page" -> page.toString))(_.json.as[List[A]])
+    def getPage(page: Int): FErrorOr[List[A]] = request(authedReq.withQueryStringParameters("page" -> page.toString))(_.json.as[List[A]])
 
     for {
-      firstWithPage <- EitherT(getFirstWithCount)
+      firstWithPage <- getFirstWithCount
       (pageNumber, first) = firstWithPage
-      rest <- (2 to pageNumber).toList.map(page => EitherT(getPage(page))).sequence
+      rest <- (2 to pageNumber).toList.map(page => getPage(page)).sequence
     } yield first ++ rest.flatten
   }
 
-  def getRepositories(orgName: String): EitherT[Future, AppError, List[Repository]] = {
+  def getRepositories(orgName: String): FErrorOr[List[Repository]] = {
     crawlPages[Repository](s"https://api.github.com/orgs/$orgName/repos")
   }
 
-  def getContributors(orgName: String, repository: Repository): EitherT[Future, AppError, List[Contributor]] = {
+  def getContributors(orgName: String, repository: Repository): FErrorOr[List[Contributor]] = {
     crawlPages[Contributor](s"https://api.github.com/repos/$orgName/${repository.name}/contributors")
   }
 }
