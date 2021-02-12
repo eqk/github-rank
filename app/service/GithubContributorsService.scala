@@ -6,7 +6,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 import cats.data.EitherT
 import cats.implicits._
-import errors.{AppError, NotFoundError, RateLimitExceeded}
+import errors.{AppError, NoContent, NotFoundError, RateLimitExceeded}
 import models.{Contributor, Repository}
 import play.api.libs.json.Reads
 import play.api.libs.ws._
@@ -32,6 +32,7 @@ class GithubContributorsService @Inject()(
       response.status match {
         case 404 => Left(NotFoundError)
         case 403 => Left(RateLimitExceeded)
+        case 204 => Left(NoContent)
         case 200 => Right(f(response))
       }
     })
@@ -50,9 +51,15 @@ class GithubContributorsService @Inject()(
     def getFirstWithCount: FErrorOr[(Int, List[A])] = request(requestWithPage(url)) { resp =>
       val pagesCount = resp.header("link").flatMap(lastPageNumber).getOrElse(1)
       (pagesCount, resp.json.as[List[A]])
+    }.recoverWith(recoverNoContent((0, List.empty[A])))
+
+    def recoverNoContent[T](v: T): PartialFunction[AppError, FErrorOr[T]] = {
+      case NoContent => EitherT(v.asRight[AppError].pure[Future])
     }
 
-    def getPage(page: Int): FErrorOr[List[A]] = request(requestWithPage(url, page))(_.json.as[List[A]])
+    def getPage(page: Int): FErrorOr[List[A]] = request(
+      requestWithPage(url, page))(_.json.as[List[A]]
+    ).recoverWith(recoverNoContent(List.empty[A]))
 
     for {
       firstWithPage <- getFirstWithCount
