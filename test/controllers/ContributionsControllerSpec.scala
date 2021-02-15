@@ -1,39 +1,33 @@
 package controllers
 
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
 
 import cats.data.EitherT
 import cats.instances.future._
 import errors.{AppError, NotFoundError, RateLimitExceeded}
 import models.{Contributor, Repository}
+import org.mockito.ArgumentMatchers
+import org.mockito.ArgumentMatchers._
+import org.mockito.Mockito._
+import org.scalatestplus.mockito.MockitoSugar
 import org.scalatestplus.play._
 import org.scalatestplus.play.guice._
+import play.api.libs.json._
 import play.api.test.Helpers._
 import play.api.test._
-import play.api.libs.json._
-import service.ContributorsService
+import services.ContributorsService
 
-/**
- * Add your spec here.
- * You can mock out a whole application including requests, plugins etc.
- *
- * For more information, see https://www.playframework.com/documentation/latest/ScalaTestingWithScalaTest
- */
-class ContributionsControllerSpec extends PlaySpec with GuiceOneAppPerTest with Injecting {
+class ContributionsControllerSpec extends PlaySpec with GuiceOneAppPerTest with Injecting with MockitoSugar {
 
-
-  def errorService(error: AppError): ContributorsService = new ContributorsService {
-    override def getRepositories(orgName: String): EitherT[Future, AppError, List[Repository]] =
-      EitherT.leftT(error)
-
-    override def getContributors(orgName: String, repository: Repository): EitherT[Future, AppError, List[Contributor]] =
-      EitherT.leftT(error)
+  def errorService(error: AppError): ContributorsService = {
+    val service = mock[ContributorsService]
+    when(service.getContributors(any(), any())).thenReturn(EitherT.leftT(error))
+    when(service.getRepositories(any())).thenReturn(EitherT.leftT(error))
+    service
   }
 
-  val uri = "/org/tests/contributors"
-
   "ContributionsController GET" should {
+    val uri = "/org/tests/contributors"
 
     "return not found with according service error" in {
       val controller = new ContributionsController(stubControllerComponents(), errorService(NotFoundError))
@@ -50,27 +44,33 @@ class ContributionsControllerSpec extends PlaySpec with GuiceOneAppPerTest with 
     }
 
     "return contributors ranks" in {
-      val contributorsService = new ContributorsService {
-        override def getRepositories(orgName: String): EitherT[Future, AppError, List[Repository]] =
-          EitherT.rightT(List(
-            Repository("1"),
-            Repository("2"),
-            Repository("3")
-          ))
+      val repos = List(Repository("A"), Repository("B"), Repository("C"))
+      val service = mock[ContributorsService]
+      when(service.getRepositories(any())).thenReturn(EitherT.rightT(repos))
+      when(service.getContributors(any(), ArgumentMatchers.eq(Repository("A")))).thenReturn(EitherT.rightT(List(
+        Contributor("c1", 1),
+        Contributor("c2", 2),
+        Contributor("c3", 3)
+      )))
+      when(service.getContributors(any(), ArgumentMatchers.eq(Repository("B")))).thenReturn(EitherT.rightT(List(
+        Contributor("c1", 3),
+        Contributor("c2", 4),
+        Contributor("c3", 2)
+      )))
+      when(service.getContributors(any(), ArgumentMatchers.eq(Repository("C")))).thenReturn(EitherT.rightT(List(
+        Contributor("c1", 2),
+        Contributor("c2", 2),
+        Contributor("c3", 4)
+      )))
 
-        override def getContributors(orgName: String, repository: Repository): EitherT[Future, AppError, List[Contributor]] =
-          EitherT.rightT(List(
-            Contributor("1", 1),
-            Contributor("2", 2),
-            Contributor("3", 3)
-          ))
-      }
-      val controller = new ContributionsController(stubControllerComponents(), contributorsService)
-      val ranks = controller.contributorsRank("").apply(FakeRequest(GET, uri))
+      val expected = Json.toJson(List(Contributor("c3", 9), Contributor("c2", 8), Contributor("c1", 6))).toString()
 
-      status(ranks) mustBe OK
-      contentType(ranks) mustBe Some("application/json")
-      contentAsString(ranks) mustBe """[{"name":"3","contributions":9},{"name":"2","contributions":6},{"name":"1","contributions":3}]"""
+      val controller = new ContributionsController(stubControllerComponents(), service)
+      val actual = controller.contributorsRank("").apply(FakeRequest(GET, uri))
+
+      status(actual) mustBe OK
+      contentType(actual) mustBe Some("application/json")
+      contentAsString(actual) mustBe expected
     }
   }
 }

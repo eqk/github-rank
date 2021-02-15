@@ -1,4 +1,4 @@
-package service
+package services
 
 import javax.inject._
 
@@ -12,10 +12,13 @@ import play.api.libs.json.Reads
 import play.api.libs.ws._
 
 @Singleton
-class GithubContributorsService @Inject()(
-  ws: WSClient
+class GithubContributorsService(
+  ws: WSClient,
+  baseUrl: String
 )(implicit ec: ExecutionContext) extends ContributorsService
 {
+  @Inject def this(ws: WSClient, ec: ExecutionContext) = this(ws, "https://api.github.com")(ec)
+
   type FErrorOr[A] = EitherT[Future, AppError, A]
   val accessToken: Option[String] = sys.env.get("GH_TOKEN")
 
@@ -27,7 +30,7 @@ class GithubContributorsService @Inject()(
     }
   }
 
-  def request[A](request: WSRequest)(f: WSResponse => A): FErrorOr[A] = {
+  private def request[A](request: WSRequest)(f: WSResponse => A): FErrorOr[A] = {
     EitherT(request.execute().map { response =>
       response.status match {
         case 404 => Left(NotFoundError)
@@ -69,10 +72,10 @@ class GithubContributorsService @Inject()(
   }
 
   def getRepositories(orgName: String): FErrorOr[List[Repository]] = {
-    crawlPages[Repository](s"https://api.github.com/orgs/$orgName/repos")
+    crawlPages[Repository](s"$baseUrl/orgs/$orgName/repos")
   }
 
   def getContributors(orgName: String, repository: Repository): FErrorOr[List[Contributor]] = {
-    crawlPages[Contributor](s"https://api.github.com/repos/$orgName/${repository.name}/contributors")
+    crawlPages[Contributor](s"$baseUrl/repos/$orgName/${repository.name}/contributors")
   }
 }

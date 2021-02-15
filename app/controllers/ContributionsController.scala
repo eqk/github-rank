@@ -2,14 +2,14 @@ package controllers
 
 import javax.inject._
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
 
+import cats.implicits._
+import errors.{NotFoundError, RateLimitExceeded}
 import models.Contributor
 import play.api.libs.json.Json
 import play.api.mvc._
-import service.ContributorsService
-import cats.implicits._
-import errors.{NotFoundError, RateLimitExceeded}
+import services.ContributorsService
 
 @Singleton
 class ContributionsController @Inject()(
